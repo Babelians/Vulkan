@@ -1,0 +1,3 @@
+﻿  vulkan.cpp
+C:\Users\riel8\source\repos\Vulkan\Vulkan\vulkan.cpp(412,26): warning C4834: 'nodiscard' 属性を持つ関数の戻り値を破棄しています
+  Vulkan.vcxproj -> C:\Users\riel8\source\repos\Vulkan\x64\Debug\Vulkan.exe

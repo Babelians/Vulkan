@@ -3,28 +3,36 @@
 void Vulkan::run()
 {
 	init();
+
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
 
-		device->resetFences({ swapchainImgFence.get() });
+		device->waitForFences({ swapchainImgFence.get() }, VK_TRUE, UINT64_MAX); //renderでfenceがシグナル状態になるまで待つ
 
-		vk::ResultValue acquireImgResult = device->acquireNextImageKHR(swapchain.get(), 1'000'000'000, {}, swapchainImgFence.get());
+		vk::ResultValue acquireImgResult = device->acquireNextImageKHR(swapchain.get(), 1'000'000'000, swapchainImgSemaphore.get());
+
+		if (acquireImgResult.result == vk::Result::eSuboptimalKHR || acquireImgResult.result == vk::Result::eErrorOutOfDateKHR)
+		{
+			cout << "スワップチェーンを再作成します";
+			fixSwapchain();
+			continue;
+		}
+
 		if (acquireImgResult.result != vk::Result::eSuccess) {
 			std::cerr << "次フレームの取得に失敗しました。"<< std::endl;
 			return;
 		}
-		imageIndex = acquireImgResult.value;
 
-		if (device->waitForFences({ swapchainImgFence.get() }, VK_TRUE, 1'000'000'000) != vk::Result::eSuccess) {
-			std::cerr << "次フレームの取得に失敗しました。" << std::endl;
-			return;
-		}
+		device->resetFences({ swapchainImgFence.get() }); //fenceを非シグナル状態にする
+
+		imageIndex = acquireImgResult.value;
 
 		render();
 
 		present();
 	}
 
+	graphicsQueue.waitIdle();
 	glfwTerminate();
 }
 
@@ -47,6 +55,9 @@ void Vulkan::init()
 	createFramebuffer();
 	createCommandBuffer();
 	createFence();
+	createSemaphore();
+	createVertexBuffer();
+	createIndexBuffer();
 }
 
 void Vulkan::initWindow()
@@ -249,11 +260,29 @@ void Vulkan::createPipeline()
 	viewportState.scissorCount = 1;
 	viewportState.pScissors = scissors;
 
+	// デスクリプション
+	//binding
+	vk::VertexInputBindingDescription vertInputBindingDescription[1];
+	vertInputBindingDescription[0].binding = 0;
+	vertInputBindingDescription[0].stride = sizeof(Vertex);
+	vertInputBindingDescription[0].inputRate = vk::VertexInputRate::eVertex;
+
+	// attribute
+	vk::VertexInputAttributeDescription vertInputAttribDescription[3];
+	vertInputAttribDescription[0].binding = 0;
+	vertInputAttribDescription[0].location = 0;
+	vertInputAttribDescription[0].format = vk::Format::eR32G32Sfloat;
+	vertInputAttribDescription[0].offset = offsetof(Vertex, pos);
+	vertInputAttribDescription[1].binding = 0;
+	vertInputAttribDescription[1].location = 1;
+	vertInputAttribDescription[1].format = vk::Format::eR32G32B32Sfloat;
+	vertInputAttribDescription[1].offset = offsetof(Vertex, color);
+
 	vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
-	vertexInputInfo.vertexAttributeDescriptionCount = 0;
-	vertexInputInfo.pVertexAttributeDescriptions = nullptr;
-	vertexInputInfo.vertexBindingDescriptionCount = 0;
-	vertexInputInfo.pVertexBindingDescriptions = nullptr;
+	vertexInputInfo.vertexBindingDescriptionCount = 1;
+	vertexInputInfo.pVertexBindingDescriptions = vertInputBindingDescription;
+	vertexInputInfo.vertexAttributeDescriptionCount = 2;
+	vertexInputInfo.pVertexAttributeDescriptions = vertInputAttribDescription;
 
 	vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
 	inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
@@ -380,20 +409,31 @@ void Vulkan::render()
 
 	commandBuffers[0]->beginRenderPass(renderpassBeginInfo, vk::SubpassContents::eInline);
 	commandBuffers[0]->bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.get());
+	commandBuffers[0]->bindVertexBuffers(0, { vertexBuffer.get()}, {0});
+	commandBuffers[0]->bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
 
 	// ここでサブパス0番の処理
-	commandBuffers[0]->draw(3, 1, 0, 0);
+	commandBuffers[0]->drawIndexed(triangle.indices.size(), 1, 0, 0, 0); //第一引数は頂点の個数
 
 	commandBuffers[0]->endRenderPass();
 
 	commandBuffers[0]->end();
 
 	vk::CommandBuffer submitCmdBuf[1] = { commandBuffers[0].get() };
+	vk::Semaphore renderWaitSemaphores[] = { swapchainImgSemaphore.get() };
+	vk::Semaphore renderSignalSemaphores[] = { imgRenderedSemaphore.get() };
+	vk::PipelineStageFlags renderwaitStages[] = { vk::PipelineStageFlagBits::eColorAttachmentOutput };
+
 	vk::SubmitInfo submitInfo;
+	submitInfo.waitSemaphoreCount = 1;
+	submitInfo.pWaitSemaphores = renderWaitSemaphores;
+	submitInfo.pWaitDstStageMask = renderwaitStages;
+	submitInfo.signalSemaphoreCount = 1;
+	submitInfo.pSignalSemaphores = renderSignalSemaphores;
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = submitCmdBuf;
 
-	graphicsQueue.submit({ submitInfo }, nullptr);
+	graphicsQueue.submit({ submitInfo }, swapchainImgFence.get());
 
 	graphicsQueue.waitIdle();
 }
@@ -405,13 +445,15 @@ void Vulkan::present()
 	auto presentSwapchains = { swapchain.get() };
 	auto imgIndices = { imageIndex };
 
+	vk::Semaphore presentWaitSenaphores[] = { imgRenderedSemaphore.get() };
+
 	presentInfo.swapchainCount = static_cast<uint32_t>(presentSwapchains.size());
 	presentInfo.pSwapchains = presentSwapchains.begin();
 	presentInfo.pImageIndices = imgIndices.begin();
+	presentInfo.waitSemaphoreCount = 1;
+	presentInfo.pWaitSemaphores = presentWaitSenaphores;
 
 	graphicsQueue.presentKHR(presentInfo);
-
-	graphicsQueue.waitIdle();
 }
 
 void Vulkan::createShaders()
@@ -449,6 +491,148 @@ vector<char> Vulkan::readFile(const char* fileName)
 
 void Vulkan::createFence()
 {
-	vk::FenceCreateInfo fenceCreateInfo;
-	swapchainImgFence = device->createFenceUnique(fenceCreateInfo);
+	vk::FenceCreateInfo fenceCI;
+	fenceCI.flags = vk::FenceCreateFlagBits::eSignaled;
+	swapchainImgFence = device->createFenceUnique(fenceCI);
+}
+
+void Vulkan::createSemaphore()
+{
+	vk::SemaphoreCreateInfo semaphoreCI{};
+
+	swapchainImgSemaphore = device->createSemaphoreUnique(semaphoreCI);
+	imgRenderedSemaphore = device->createSemaphoreUnique(semaphoreCI);
+}
+
+void Vulkan::fixSwapchain()
+{
+	// swapchain関連のオブジェクトを破棄
+	swapchainFrameBuffers.clear();
+	swapchainImageViews.clear();
+	swapchainImages.clear();
+	swapchain.reset();
+
+	createSwapchain();
+	createRenderPass();
+	createPipeline();
+	createImageView();
+	createFramebuffer();
+}
+
+void Vulkan::createVertexBuffer()
+{
+	auto data = triangle.vert.data();
+	auto size = sizeof(Vertex)* triangle.vert.size();
+	// バッファの作成
+	vk::BufferCreateInfo bufferCI{};
+	bufferCI.size = size;
+	bufferCI.usage = vk::BufferUsageFlagBits::eVertexBuffer;
+	bufferCI.sharingMode = vk::SharingMode::eExclusive;
+
+	vertexBuffer = device->createBufferUnique(bufferCI);
+
+	// デバイスメモリの作成
+	vk::PhysicalDeviceMemoryProperties physDevMemProps = physicalDevice.getMemoryProperties();
+
+	vk::MemoryRequirements memReq = device->getBufferMemoryRequirements(vertexBuffer.get());
+
+	vk::MemoryAllocateInfo memAlloc;
+	memAlloc.allocationSize = memReq.size;
+
+	bool suitableMemoryTypeFound = false;
+
+	for (uint32_t i = 0; i < physDevMemProps.memoryTypeCount; i++)
+	{
+		if (memReq.memoryTypeBits & (1 << i) && (physDevMemProps.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible))
+		{
+			memAlloc.memoryTypeIndex = i;
+			suitableMemoryTypeFound = true;
+		}
+	}
+
+	if (!suitableMemoryTypeFound) {
+		std::cerr << "適切なメモリタイプが存在しません。" << std::endl;
+		return;
+	}
+
+	// メモリ確保
+	vk::UniqueDeviceMemory deviceMemory = device->allocateMemoryUnique(memAlloc);
+
+	// バッファとメモリの結びつけ
+	device->bindBufferMemory(vertexBuffer.get(), deviceMemory.get(), 0);
+
+	// マッピング
+	void* vertexBufferMem = device->mapMemory(deviceMemory.get(), 0, size);
+
+	// メインメモリにコピー
+	memcpy(vertexBufferMem, data, size);
+
+	// デバイスメモリとメインメモリの同期
+	vk::MappedMemoryRange flushMemRange;
+	flushMemRange.memory = deviceMemory.get();
+	flushMemRange.offset = 0; //開始
+	flushMemRange.size = size; //大きさ
+
+	device->flushMappedMemoryRanges({ flushMemRange });
+
+	device->unmapMemory(deviceMemory.get());
+}
+
+void Vulkan::createIndexBuffer()
+{
+	auto data = triangle.indices.data();
+	auto size = sizeof(uint32_t) * triangle.indices.size();
+	// バッファの作成
+	vk::BufferCreateInfo bufferCI{};
+	bufferCI.size = size;
+	bufferCI.usage = vk::BufferUsageFlagBits::eIndexBuffer;
+	bufferCI.sharingMode = vk::SharingMode::eExclusive;
+
+	indexBuffer = device->createBufferUnique(bufferCI);
+
+	// デバイスメモリの作成
+	vk::PhysicalDeviceMemoryProperties physDevMemProps = physicalDevice.getMemoryProperties();
+
+	vk::MemoryRequirements memReq = device->getBufferMemoryRequirements(indexBuffer.get());
+
+	vk::MemoryAllocateInfo memAlloc;
+	memAlloc.allocationSize = memReq.size;
+
+	bool suitableMemoryTypeFound = false;
+
+	for (uint32_t i = 0; i < physDevMemProps.memoryTypeCount; i++)
+	{
+		if (memReq.memoryTypeBits & (1 << i) && (physDevMemProps.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible))
+		{
+			memAlloc.memoryTypeIndex = i;
+			suitableMemoryTypeFound = true;
+		}
+	}
+
+	if (!suitableMemoryTypeFound) {
+		std::cerr << "適切なメモリタイプが存在しません。" << std::endl;
+		return;
+	}
+
+	// メモリ確保
+	vk::UniqueDeviceMemory deviceMemory = device->allocateMemoryUnique(memAlloc);
+
+	// バッファとメモリの結びつけ
+	device->bindBufferMemory(indexBuffer.get(), deviceMemory.get(), 0);
+
+	// マッピング
+	void* indexBufferMem = device->mapMemory(deviceMemory.get(), 0, size);
+
+	// メインメモリにコピー
+	memcpy(indexBufferMem, data, size);
+
+	// デバイスメモリとメインメモリの同期
+	vk::MappedMemoryRange flushMemRange;
+	flushMemRange.memory = deviceMemory.get();
+	flushMemRange.offset = 0; //開始
+	flushMemRange.size = size; //大きさ
+
+	device->flushMappedMemoryRanges({ flushMemRange });
+
+	device->unmapMemory(deviceMemory.get());
 }

@@ -8,6 +8,8 @@
 #include <fstream>
 #include <filesystem>
 #include <string>
+#include <cstring>
+#include "triangle.h"
 
 using namespace std;
 
@@ -32,6 +34,10 @@ private:
 	void createSwapchain();
 	void present();
 	void createFence();
+	void createSemaphore();
+	void fixSwapchain();
+	void createVertexBuffer();
+	void createIndexBuffer();
 
 	vector<char> readFile(const char* fileName);
 
@@ -58,6 +64,10 @@ private:
 	vector<vk::UniqueFramebuffer> swapchainFrameBuffers;
 	uint32_t imageIndex;
 	vk::UniqueFence swapchainImgFence;
+	vk::UniqueSemaphore swapchainImgSemaphore, imgRenderedSemaphore;
+	vk::UniqueBuffer vertexBuffer;
+	vk::UniqueBuffer indexBuffer;
+	Triangle triangle;
 
 	uint32_t screenWidth = 640, screenHeight = 480;
 

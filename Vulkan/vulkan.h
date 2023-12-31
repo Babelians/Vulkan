@@ -67,6 +67,7 @@ private:
 	vk::UniqueSemaphore swapchainImgSemaphore, imgRenderedSemaphore;
 	vk::UniqueBuffer vertexBuffer;
 	vk::UniqueBuffer indexBuffer;
+	vk::PhysicalDeviceMemoryProperties physDevMemProps;
 	Triangle triangle;
 
 	uint32_t screenWidth = 640, screenHeight = 480;

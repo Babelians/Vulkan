@@ -54,10 +54,10 @@ void Vulkan::init()
 	createImageView();
 	createFramebuffer();
 	createCommandBuffer();
-	createFence();
-	createSemaphore();
 	createVertexBuffer();
 	createIndexBuffer();
+	createFence();
+	createSemaphore();
 }
 
 void Vulkan::initWindow()
@@ -135,6 +135,7 @@ void Vulkan::selectPhysicalDevice()
 		{
 			physicalDevice = pd;
 			graphicsQueueIndex = thisGraphicsQueueIndex.value();
+			physDevMemProps = physicalDevice.getMemoryProperties();
 			return;
 		}
 	}
@@ -532,7 +533,6 @@ void Vulkan::createVertexBuffer()
 	vertexBuffer = device->createBufferUnique(bufferCI);
 
 	// デバイスメモリの作成
-	vk::PhysicalDeviceMemoryProperties physDevMemProps = physicalDevice.getMemoryProperties();
 
 	vk::MemoryRequirements memReq = device->getBufferMemoryRequirements(vertexBuffer.get());
 
@@ -547,6 +547,7 @@ void Vulkan::createVertexBuffer()
 		{
 			memAlloc.memoryTypeIndex = i;
 			suitableMemoryTypeFound = true;
+			//break;
 		}
 	}
 
@@ -581,17 +582,14 @@ void Vulkan::createVertexBuffer()
 void Vulkan::createIndexBuffer()
 {
 	auto data = triangle.indices.data();
-	auto size = sizeof(uint32_t) * triangle.indices.size();
-	// バッファの作成
-	vk::BufferCreateInfo bufferCI{};
+	auto size =  sizeof(uint32_t) * triangle.indices.size();
+
+	vk::BufferCreateInfo bufferCI;
 	bufferCI.size = size;
 	bufferCI.usage = vk::BufferUsageFlagBits::eIndexBuffer;
 	bufferCI.sharingMode = vk::SharingMode::eExclusive;
 
 	indexBuffer = device->createBufferUnique(bufferCI);
-
-	// デバイスメモリの作成
-	vk::PhysicalDeviceMemoryProperties physDevMemProps = physicalDevice.getMemoryProperties();
 
 	vk::MemoryRequirements memReq = device->getBufferMemoryRequirements(indexBuffer.get());
 
@@ -599,38 +597,30 @@ void Vulkan::createIndexBuffer()
 	memAlloc.allocationSize = memReq.size;
 
 	bool suitableMemoryTypeFound = false;
-
-	for (uint32_t i = 0; i < physDevMemProps.memoryTypeCount; i++)
-	{
-		if (memReq.memoryTypeBits & (1 << i) && (physDevMemProps.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible))
-		{
+	for (uint32_t i = 0; i < physDevMemProps.memoryTypeCount; i++) {
+		if (memReq.memoryTypeBits & (1 << i) && (physDevMemProps.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible)) {
 			memAlloc.memoryTypeIndex = i;
 			suitableMemoryTypeFound = true;
+			break;
 		}
 	}
-
 	if (!suitableMemoryTypeFound) {
 		std::cerr << "適切なメモリタイプが存在しません。" << std::endl;
 		return;
 	}
 
-	// メモリ確保
 	vk::UniqueDeviceMemory deviceMemory = device->allocateMemoryUnique(memAlloc);
 
-	// バッファとメモリの結びつけ
 	device->bindBufferMemory(indexBuffer.get(), deviceMemory.get(), 0);
 
-	// マッピング
-	void* indexBufferMem = device->mapMemory(deviceMemory.get(), 0, size);
+	void* indexBufMem = device->mapMemory(deviceMemory.get(), 0, size);
 
-	// メインメモリにコピー
-	memcpy(indexBufferMem, data, size);
+	std::memcpy(indexBufMem, data, size);
 
-	// デバイスメモリとメインメモリの同期
 	vk::MappedMemoryRange flushMemRange;
 	flushMemRange.memory = deviceMemory.get();
-	flushMemRange.offset = 0; //開始
-	flushMemRange.size = size; //大きさ
+	flushMemRange.offset = 0;
+	flushMemRange.size = size;
 
 	device->flushMappedMemoryRanges({ flushMemRange });
 

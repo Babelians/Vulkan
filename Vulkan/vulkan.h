@@ -36,8 +36,9 @@ private:
 	void createFence();
 	void createSemaphore();
 	void fixSwapchain();
-	void createVertexBuffer();
-	void createIndexBuffer();
+	void createVertexBuffer(void* data, size_t size);
+	void createIndexBuffer(void* data, size_t size);
+	void createStagingBuffer(void *data, size_t size);
 
 	vector<char> readFile(const char* fileName);
 
@@ -45,7 +46,7 @@ private:
 	vk::UniqueInstance instance;
 	vk::PhysicalDevice physicalDevice;
 	vk::UniqueDevice device;
-	uint32_t graphicsQueueIndex;
+	uint32_t graphicsQueueFamIndex;
 	vk::Queue graphicsQueue;
 	vk::UniqueCommandPool commandPool;
 	vector<vk::UniqueCommandBuffer> commandBuffers;
@@ -67,7 +68,12 @@ private:
 	vk::UniqueSemaphore swapchainImgSemaphore, imgRenderedSemaphore;
 	vk::UniqueBuffer vertexBuffer;
 	vk::UniqueBuffer indexBuffer;
+	vk::UniqueBuffer stagingBuffer;
 	vk::PhysicalDeviceMemoryProperties physDevMemProps;
+	vk::UniqueDeviceMemory stagingBufMemory;
+	vk::UniqueDeviceMemory vertDeviceMemory;
+	vk::UniqueDeviceMemory idxDeviceMemory;
+
 	Triangle triangle;
 
 	uint32_t screenWidth = 640, screenHeight = 480;

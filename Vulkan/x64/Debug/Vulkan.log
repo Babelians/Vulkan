@@ -1,7 +1,5 @@
-﻿  main.cpp
-  vulkan.cpp
-C:\Users\riel8\Documents\GitHub\Vulkan\Vulkan\vulkan.cpp(10,24): warning C4834: 'nodiscard' 属性を持つ関数の戻り値を破棄しています
-C:\Users\riel8\Documents\GitHub\Vulkan\Vulkan\vulkan.cpp(417,68): warning C4267: '引数': 'size_t' から 'uint32_t' に変換しました。データが失われているかもしれません。
-C:\Users\riel8\Documents\GitHub\Vulkan\Vulkan\vulkan.cpp(457,26): warning C4834: 'nodiscard' 属性を持つ関数の戻り値を破棄しています
-  コードを生成中...
-  Vulkan.vcxproj -> C:\Users\riel8\Documents\GitHub\Vulkan\x64\Debug\Vulkan.exe
+﻿  vulkan.cpp
+C:\Users\yaega\Documents\GitHub\Vulkan\Vulkan\vulkan.cpp(10,24): warning C4834: [[nodiscard]] 属性を持つ関数の戻り値を破棄しています
+C:\Users\yaega\Documents\GitHub\Vulkan\Vulkan\vulkan.cpp(417,54): warning C4267: '引数': 'size_t' から 'uint32_t' に変換しました。データが失われているかもしれません。
+C:\Users\yaega\Documents\GitHub\Vulkan\Vulkan\vulkan.cpp(457,26): warning C4834: [[nodiscard]] 属性を持つ関数の戻り値を破棄しています
+  Vulkan.vcxproj -> C:\Users\yaega\Documents\GitHub\Vulkan\x64\Debug\Vulkan.exe

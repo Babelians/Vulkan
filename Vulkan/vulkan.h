@@ -10,6 +10,7 @@
 #include <string>
 #include <cstring>
 #include "triangle.h"
+#include "sceneData.h"
 
 using namespace std;
 
@@ -39,6 +40,8 @@ private:
 	void createVertexBuffer(void* data, size_t size);
 	void createIndexBuffer(void* data, size_t size);
 	void createStagingBuffer(void *data, size_t size);
+	void createDescriptorSet();
+	vk::UniqueDeviceMemory getSuitableDevMem(vk::Buffer buffer, vk::MemoryPropertyFlagBits flag);
 
 	vector<char> readFile(const char* fileName);
 
@@ -69,12 +72,19 @@ private:
 	vk::UniqueBuffer vertexBuffer;
 	vk::UniqueBuffer indexBuffer;
 	vk::UniqueBuffer stagingBuffer;
+	vk::UniqueBuffer uniformBuffer;
 	vk::PhysicalDeviceMemoryProperties physDevMemProps;
 	vk::UniqueDeviceMemory stagingBufMemory;
 	vk::UniqueDeviceMemory vertDeviceMemory;
 	vk::UniqueDeviceMemory idxDeviceMemory;
+	vk::UniqueDeviceMemory uniformBufMem;
+	vk::UniqueDescriptorSetLayout descriptorSetLayout;
+	vk::UniqueDescriptorPool descriptorPool;
+	vector<vk::UniqueDescriptorSet> descriptorSets;
+	vk::UniquePipelineLayout pipelineLayout;
 
 	Triangle triangle;
+	SceneData sceneData = { Vec2{ 0.3f, 0.0f } };
 
 	uint32_t screenWidth = 640, screenHeight = 480;
 

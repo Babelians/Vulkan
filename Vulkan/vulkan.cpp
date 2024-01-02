@@ -4,8 +4,27 @@ void Vulkan::run()
 {
 	init();
 
+	void* pUniformBufMem = device->mapMemory(uniformBufMem.get(), 0, sizeof(SceneData));
+
+	float time = 0;
+
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
+
+		sceneData.rectCenter = Vec2{ 0.3f * cosf(time), 0.3f * sinf(time) };
+		time += 0.001;
+
+		void* data = &sceneData;
+		size_t size = sizeof(SceneData);
+
+		std::memcpy(pUniformBufMem, data, size);
+
+		vk::MappedMemoryRange flushMemoryRange;
+		flushMemoryRange.memory = uniformBufMem.get();
+		flushMemoryRange.offset = 0;
+		flushMemoryRange.size = size;
+
+		device->flushMappedMemoryRanges({ flushMemoryRange });
 
 		device->waitForFences({ swapchainImgFence.get() }, VK_TRUE, UINT64_MAX); //renderでfenceがシグナル状態になるまで待つ
 
@@ -32,6 +51,8 @@ void Vulkan::run()
 		present();
 	}
 
+	device->unmapMemory(uniformBufMem.get());
+
 	graphicsQueue.waitIdle();
 	glfwTerminate();
 }
@@ -47,6 +68,7 @@ void Vulkan::init()
 	createSurface();
 	selectPhysicalDevice();
 	createDevice();
+	createDescriptorSet();
 	createSwapchain();
 	createRenderPass();
 	createShaders();
@@ -315,11 +337,15 @@ void Vulkan::createPipeline()
 	blend.attachmentCount = 1;
 	blend.pAttachments = blendattachment;
 
-	vk::PipelineLayoutCreateInfo layoutCreateInfo;
-	layoutCreateInfo.setLayoutCount = 0;
-	layoutCreateInfo.pSetLayouts = nullptr;
+	// descriptorSetLayout
 
-	vk::UniquePipelineLayout pipelineLayout = device->createPipelineLayoutUnique(layoutCreateInfo);
+	auto pipelineDescriptorSetLayouts = { descriptorSetLayout.get() };
+
+	vk::PipelineLayoutCreateInfo layoutCreateInfo;
+	layoutCreateInfo.setLayoutCount = pipelineDescriptorSetLayouts.size();
+	layoutCreateInfo.pSetLayouts = pipelineDescriptorSetLayouts.begin();
+
+	pipelineLayout = device->createPipelineLayoutUnique(layoutCreateInfo);
 
 	vk::PipelineShaderStageCreateInfo shaderStage[2];
 	shaderStage[0].stage = vk::ShaderStageFlagBits::eVertex;
@@ -412,6 +438,7 @@ void Vulkan::render()
 	commandBuffers[0]->bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.get());
 	commandBuffers[0]->bindVertexBuffers(0, { vertexBuffer.get()}, {0});
 	commandBuffers[0]->bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+	commandBuffers[0]->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout.get(), 0, { descriptorSets[0].get()}, {});
 
 	// ここでサブパス0番の処理
 	commandBuffers[0]->drawIndexed(triangle.indices.size(), 1, 0, 0, 0); //第一引数は頂点の個数
@@ -520,6 +547,36 @@ void Vulkan::fixSwapchain()
 	createFramebuffer();
 }
 
+vk::UniqueDeviceMemory Vulkan::getSuitableDevMem(vk::Buffer buffer, vk::MemoryPropertyFlagBits flag)
+{
+	// デバイスメモリの作成
+
+	vk::MemoryRequirements memReq = device->getBufferMemoryRequirements(buffer);
+
+	vk::MemoryAllocateInfo memAlloc;
+	memAlloc.allocationSize = memReq.size;
+
+	bool suitableMemoryTypeFound = false;
+
+	for (uint32_t i = 0; i < physDevMemProps.memoryTypeCount; i++)
+	{
+		if (memReq.memoryTypeBits & (1 << i) && (physDevMemProps.memoryTypes[i].propertyFlags & flag))
+		{
+			memAlloc.memoryTypeIndex = i;
+			suitableMemoryTypeFound = true;
+			break;
+		}
+	}
+
+	if (!suitableMemoryTypeFound) {
+		std::cerr << "適切なメモリタイプが存在しません。" << std::endl;
+	}
+
+	vk::UniqueDeviceMemory deviceMemory = device->allocateMemoryUnique(memAlloc);
+
+	return deviceMemory;
+}
+
 void Vulkan::createVertexBuffer(void *data, size_t size)
 {
 	// バッファの作成
@@ -532,29 +589,7 @@ void Vulkan::createVertexBuffer(void *data, size_t size)
 
 	// デバイスメモリの作成
 
-	vk::MemoryRequirements memReq = device->getBufferMemoryRequirements(vertexBuffer.get());
-
-	vk::MemoryAllocateInfo memAlloc;
-	memAlloc.allocationSize = memReq.size;
-
-	bool suitableMemoryTypeFound = false;
-
-	for (uint32_t i = 0; i < physDevMemProps.memoryTypeCount; i++)
-	{
-		if (memReq.memoryTypeBits & (1 << i) && (physDevMemProps.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal))
-		{
-			memAlloc.memoryTypeIndex = i;
-			suitableMemoryTypeFound = true;
-			break;
-		}
-	}
-
-	if (!suitableMemoryTypeFound) {
-		std::cerr << "適切なメモリタイプが存在しません。" << std::endl;
-		return;
-	}
-
-	vertDeviceMemory = device->allocateMemoryUnique(memAlloc);
+	vertDeviceMemory = getSuitableDevMem(vertexBuffer.get(), vk::MemoryPropertyFlagBits::eDeviceLocal);
 
 	device->bindBufferMemory(vertexBuffer.get(), vertDeviceMemory.get(), 0);
 
@@ -609,25 +644,7 @@ void Vulkan::createIndexBuffer(void* data, size_t size)
 
 	indexBuffer = device->createBufferUnique(bufferCI);
 
-	vk::MemoryRequirements memReq = device->getBufferMemoryRequirements(indexBuffer.get());
-
-	vk::MemoryAllocateInfo memAlloc;
-	memAlloc.allocationSize = memReq.size;
-
-	bool suitableMemoryTypeFound = false;
-	for (uint32_t i = 0; i < physDevMemProps.memoryTypeCount; i++) {
-		if (memReq.memoryTypeBits & (1 << i) && (physDevMemProps.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal)) {
-			memAlloc.memoryTypeIndex = i;
-			suitableMemoryTypeFound = true;
-			break;
-		}
-	}
-	if (!suitableMemoryTypeFound) {
-		std::cerr << "適切なメモリタイプが存在しません。" << std::endl;
-		return;
-	}
-
-	idxDeviceMemory = device->allocateMemoryUnique(memAlloc);
+	idxDeviceMemory = getSuitableDevMem(indexBuffer.get(), vk::MemoryPropertyFlagBits::eDeviceLocal);
 
 	device->bindBufferMemory(indexBuffer.get(), idxDeviceMemory.get(), 0);
 
@@ -681,30 +698,8 @@ void Vulkan::createStagingBuffer(void* data, size_t size)
 
 	// デバイスメモリの作成
 
-	vk::MemoryRequirements memReq = device->getBufferMemoryRequirements(stagingBuffer.get());
-
-	vk::MemoryAllocateInfo memAlloc;
-	memAlloc.allocationSize = memReq.size;
-
-	bool suitableMemoryTypeFound = false;
-
-	for (uint32_t i = 0; i < physDevMemProps.memoryTypeCount; i++)
-	{
-		if (memReq.memoryTypeBits & (1 << i) && (physDevMemProps.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible))
-		{
-			memAlloc.memoryTypeIndex = i;
-			suitableMemoryTypeFound = true;
-			break;
-		}
-	}
-
-	if (!suitableMemoryTypeFound) {
-		std::cerr << "適切なメモリタイプが存在しません。" << std::endl;
-		return;
-	}
-
 	// メモリ確保
-	stagingBufMemory = device->allocateMemoryUnique(memAlloc);
+	stagingBufMemory = getSuitableDevMem(stagingBuffer.get(), vk::MemoryPropertyFlagBits::eHostVisible);
 
 	// バッファとメモリの結びつけ
 	device->bindBufferMemory(stagingBuffer.get(), stagingBufMemory.get(), 0);
@@ -724,4 +719,67 @@ void Vulkan::createStagingBuffer(void* data, size_t size)
 	device->flushMappedMemoryRanges({ flushMemRange });
 
 	device->unmapMemory(stagingBufMemory.get());
+}
+
+void Vulkan::createDescriptorSet()
+{
+	auto size = sizeof(SceneData);
+
+	vk::BufferCreateInfo bufferCI;
+	bufferCI.size = size;
+	bufferCI.usage = vk::BufferUsageFlagBits::eUniformBuffer;
+	bufferCI.sharingMode = vk::SharingMode::eExclusive;
+
+	uniformBuffer = device->createBufferUnique(bufferCI);
+	
+	uniformBufMem = getSuitableDevMem(uniformBuffer.get(), vk::MemoryPropertyFlagBits::eHostVisible);
+
+	device->bindBufferMemory(uniformBuffer.get(), uniformBufMem.get(), 0);
+
+	vk::DescriptorSetLayoutBinding dslBinding[1];
+	dslBinding[0].binding = 0; // シェーダのLayout
+	dslBinding[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+	dslBinding[0].descriptorCount = 1;
+	dslBinding[0].stageFlags = vk::ShaderStageFlagBits::eVertex;
+
+	vk::DescriptorSetLayoutCreateInfo dslCI;
+	dslCI.bindingCount = 1;
+	dslCI.pBindings = dslBinding;
+
+	descriptorSetLayout = device->createDescriptorSetLayoutUnique(dslCI);
+
+	vk::DescriptorPoolSize descPoolSize[1];
+	descPoolSize[0].type = vk::DescriptorType::eUniformBuffer;
+	descPoolSize[0].descriptorCount = 1;
+
+	vk::DescriptorPoolCreateInfo descriptorPoolCI;
+	descriptorPoolCI.poolSizeCount = 1;
+	descriptorPoolCI.pPoolSizes = descPoolSize;
+	descriptorPoolCI.maxSets = 1;
+
+	descriptorPool = device->createDescriptorPoolUnique(descriptorPoolCI);
+
+	auto descriSetLayouts = { descriptorSetLayout.get() };
+
+	vk::DescriptorSetAllocateInfo descrSetAllocInfo;
+	descrSetAllocInfo.descriptorPool = descriptorPool.get();
+	descrSetAllocInfo.descriptorSetCount = descriSetLayouts.size();
+	descrSetAllocInfo.pSetLayouts = descriSetLayouts.begin();
+
+	descriptorSets = device->allocateDescriptorSetsUnique(descrSetAllocInfo);
+
+	vk::DescriptorBufferInfo descrBufInfo[1];
+	descrBufInfo[0].buffer = uniformBuffer.get();
+	descrBufInfo[0].offset = 0;
+	descrBufInfo[0].range = size;
+
+	vk::WriteDescriptorSet writeDescrSet;
+	writeDescrSet.dstSet = descriptorSets[0].get();
+	writeDescrSet.dstBinding = 0;
+	writeDescrSet.dstArrayElement = 0;
+	writeDescrSet.descriptorType = vk::DescriptorType::eUniformBuffer;
+	writeDescrSet.descriptorCount = 1;
+	writeDescrSet.pBufferInfo = descrBufInfo;
+
+	device->updateDescriptorSets({ writeDescrSet }, {});
 }
